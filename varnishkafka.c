@@ -1871,6 +1871,7 @@ int main (int argc, char **argv) {
 	char hostname[1024];
 	struct hostent *lh;
 	char c;
+	size_t option_length;
 
 	/*
 	 * Default configuration
@@ -1891,6 +1892,10 @@ int main (int argc, char **argv) {
 	rd_kafka_conf_set_dr_cb(conf.rk_conf, kafka_dr_cb);
 	rd_kafka_conf_set(conf.rk_conf, "queue.buffering.max.messages",
 			  "1000000", NULL, 0);
+	if (rd_kafka_conf_get(conf.rk_conf, "api.version.request", NULL,
+		    &option_length) == RD_KAFKA_CONF_OK) {
+		rd_kafka_conf_set(conf.rk_conf, "api.version.request", "true", NULL, 0);
+	}
 
 	conf.topic_conf = rd_kafka_topic_conf_new();
 	rd_kafka_topic_conf_set(conf.topic_conf, "required_acks", "1", NULL, 0);
