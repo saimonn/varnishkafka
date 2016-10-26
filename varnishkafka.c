@@ -192,14 +192,9 @@ static int format_add (int fmtr, const char *var, ssize_t varlen,
 		       int flags) {
 	struct fmt *fmt;
 
-	if (fconf.fmt_cnt >= fconf.fmt_size) {
-		fconf.fmt_size = (fconf.fmt_size ? : 32) * 2;
-		fconf.fmt = realloc(fconf.fmt,
-				     fconf.fmt_size * sizeof(*fconf.fmt));
-	}
+	assert(fconf.fmt_cnt < fconf.fmt_size);
 
 	fmt = &fconf.fmt[fconf.fmt_cnt];
-	memset(fmt, 0, sizeof(*fmt));
 
 	fmt->id    = fmtr;
 	fmt->idx   = fconf.fmt_cnt;
@@ -921,6 +916,13 @@ static int format_parse (const char *format_orig,
 
 	/* Perform legacy replacements. */
 	format = string_replace_arr(format_orig, replace);
+
+	s = format;
+  fconf.fmt_size = 1;
+	while ( *s != '\0' &&  (s = strchr(s+1, '%')) )
+		fconf.fmt_size++;
+  fconf.fmt_size *= 2;
+	fconf.fmt = calloc(fconf.fmt_size, sizeof(*fconf.fmt));
 
 	/* Parse the format string */
 	s = t = format;
