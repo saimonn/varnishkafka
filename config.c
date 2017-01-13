@@ -86,117 +86,126 @@ static fmt_enc_t encoding_parse (const char *val) {
  * contain an error string.
  */
 static int conf_set (const char *name, const char *val,
-                     char *errstr, size_t errstr_size) {
-    rd_kafka_conf_res_t res;
+		     char *errstr, size_t errstr_size) {
+	rd_kafka_conf_res_t res;
 
 
-    /* Kafka configuration */
-    if (!strncmp(name, "kafka.", strlen("kafka."))) {
-        name += strlen("kafka.");
+	/* Kafka configuration */
+	if (!strncmp(name, "kafka.", strlen("kafka."))) {
+		name += strlen("kafka.");
 
-        /* Kafka topic configuration. */
-        if (!strncmp(name, "topic.", strlen("topic.")))
-            res = rd_kafka_topic_conf_set(conf.topic_conf, name+strlen("topic."),
-                                          val, errstr, errstr_size);
-        else /* Kafka global configuration */
-            res = rd_kafka_conf_set(conf.rk_conf, name,
-                        val, errstr, errstr_size);
+		/* Kafka topic configuration. */
+		if (!strncmp(name, "topic.", strlen("topic.")))
+			res = rd_kafka_topic_conf_set(conf.topic_conf,
+						      name+strlen("topic."),
+						      val,
+						      errstr, errstr_size);
+		else /* Kafka global configuration */
+			res = rd_kafka_conf_set(conf.rk_conf, name,
+						val, errstr, errstr_size);
 
-        if (res == RD_KAFKA_CONF_OK)
-            return 0;
-        else if (res != RD_KAFKA_CONF_UNKNOWN)
-            return -1;
+		if (res == RD_KAFKA_CONF_OK)
+			return 0;
+		else if (res != RD_KAFKA_CONF_UNKNOWN)
+			return -1;
+		
+		/* Unknown configs: fall thru */
+		name -= strlen("kafka.");
+	}
 
-        /* Unknown configs: fall thru */
-        name -= strlen("kafka.");
-    }
+	/* librdkafka handles NULL configuration values, we dont. */
+	if (!val) {
+		snprintf(errstr, errstr_size, "\"%s\" requires an argument",
+			 name);
+		return -1;
+	}
+			 
+	/* varnishkafka configuration options */
+	if (!strcmp(name, "kafka.topic"))
+		conf.topic = strdup(val);
+	else if (!strcmp(name, "kafka.partition"))
+		conf.partition = atoi(val);
+	else if (!strcmp(name, "format"))
+		conf.format = strdup(val);
+	else if (!strcmp(name, "format.type")) {
+		if ((fconf.encoding =
+		     encoding_parse(val)) == VK_ENC_INVALID) {
+			snprintf(errstr, errstr_size,
+				 "Unknown format.type value \"%s\"", val);
+			return -1;
+		}
+	} else if (!strcmp(name, "tag.size.max"))
+		conf.tag_size_max = atoi(val);
+	else if (!strcmp(name, "log.level"))
+		conf.log_level = atoi(val);
+	else if (!strcmp(name, "log.stderr")) {
+		if (conf_tof(val))
+			conf.log_to |= VK_LOG_STDERR;
+		else
+			conf.log_to &= ~VK_LOG_STDERR;
+	} else if (!strcmp(name, "log.syslog")) {
+		if (conf_tof(val))
+			conf.log_to |= VK_LOG_SYSLOG;
+		else
+			conf.log_to &= ~VK_LOG_SYSLOG;
+	} else if (!strcmp(name, "log.kafka.msg.error"))
+		conf.log_kafka_msg_error = conf_tof(val);
+	else if (!strcmp(name, "log.statistics.file")) {
+		free(conf.stats_file);
+		conf.stats_file = strdup(val);
+	} else if (!strcmp(name, "log.statistics.interval"))
+		conf.stats_interval = atoi(val);
+	else if (!strcmp(name, "log.statistics.append"))
+		conf.stats_append = conf_tof(val);
+	else if (!strcmp(name, "log.rate.max"))
+		conf.log_rate = atoi(val);
+	else if (!strcmp(name, "log.rate.period"))
+		conf.log_rate_period = atoi(val);
+	else if (!strcmp(name, "daemonize"))
+		conf.daemonize = conf_tof(val);
+	else if (!strcmp(name, "sequence.number")) {
+		if (!strcmp(val, "time"))
+			conf.sequence_number = (uint64_t)time(NULL)*1000000llu;
+		else
+			conf.sequence_number = strtoull(val, NULL, 0);
+	} else if (!strcmp(name, "output")) {
+		if (!strcmp(val, "kafka"))
+			outfunc = out_kafka;
+		else if (!strcmp(val, "-") || !strcmp(val, "stdout"))
+			outfunc = out_stdout;
+		else if (!strcmp(val, "null"))
+			outfunc = out_null;
+		else {
+			snprintf(errstr, errstr_size,
+				 "Unknown outputter \"%s\": " 
+				 "try \"stdout\" or \"kafka\"", val);
+			return -1;
+		}
+	} else if (!strcmp(name, "logline.scratch.size"))
+		conf.scratch_size = atoi(val);
+	else if (!strcmp(name, "varnish.arg.q")) {
+		conf.q_flag = 1;
+		conf.q_flag_query = strdup(val);
+	} else if (!strcmp(name, "varnish.arg.n")) {
+		conf.n_flag = 1;
+		conf.n_flag_name = strdup(val);
+	} else if (!strcmp(name, "varnish.arg.N")) {
+		conf.N_flag = 1;
+		conf.N_flag_path = strdup(val);
+	} else if (!strcmp(name, "varnish.arg.T")) {
+		conf.T_flag = 1;
+		conf.T_flag_seconds = strdup(val);
+	} else if (!strcmp(name, "varnish.arg.L")) {
+		conf.L_flag = 1;
+		conf.L_flag_transactions = strdup(val);
+	} else {
+		snprintf(errstr, errstr_size,
+			 "Unknown configuration property \"%s\"\n", name);
+		return -1;
+	}
 
-    /* librdkafka handles NULL configuration values, we dont. */
-    if (!val) {
-        snprintf(errstr, errstr_size, "\"%s\" requires an argument", name);
-        return -1;
-    }
 
-    /* varnishkafka configuration options */
-    if (!strcmp(name, "kafka.topic"))
-        conf.topic = strdup(val);
-    else if (!strcmp(name, "kafka.partition"))
-        conf.partition = atoi(val);
-    else if (!strcmp(name, "format"))
-        conf.format = strdup(val);
-    else if (!strcmp(name, "format.type")) {
-        if ((fconf.encoding =
-             encoding_parse(val)) == VK_ENC_INVALID) {
-            snprintf(errstr, errstr_size,
-                 "Unknown format.type value \"%s\"", val);
-            return -1;
-        }
-    } else if (!strcmp(name, "tag.size.max"))
-        conf.tag_size_max = atoi(val);
-    else if (!strcmp(name, "log.level"))
-        conf.log_level = atoi(val);
-    else if (!strcmp(name, "log.stderr")) {
-        if (conf_tof(val))
-            conf.log_to |= VK_LOG_STDERR;
-        else
-            conf.log_to &= ~VK_LOG_STDERR;
-    } else if (!strcmp(name, "log.syslog")) {
-        if (conf_tof(val))
-            conf.log_to |= VK_LOG_SYSLOG;
-        else
-            conf.log_to &= ~VK_LOG_SYSLOG;
-    } else if (!strcmp(name, "log.kafka.msg.error"))
-        conf.log_kafka_msg_error = conf_tof(val);
-    else if (!strcmp(name, "log.statistics.file")) {
-        free(conf.stats_file);
-        conf.stats_file = strdup(val);
-    } else if (!strcmp(name, "log.statistics.interval"))
-        conf.stats_interval = atoi(val);
-    else if (!strcmp(name, "log.rate.max"))
-        conf.log_rate = atoi(val);
-    else if (!strcmp(name, "log.rate.period"))
-        conf.log_rate_period = atoi(val);
-    else if (!strcmp(name, "daemonize"))
-        conf.daemonize = conf_tof(val);
-    else if (!strcmp(name, "sequence.number")) {
-        if (!strcmp(val, "time"))
-            conf.sequence_number = (uint64_t)time(NULL)*1000000llu;
-        else
-            conf.sequence_number = strtoull(val, NULL, 0);
-        conf.sequence_number_start = conf.sequence_number;
-    } else if (!strcmp(name, "output")) {
-        if (!strcmp(val, "kafka"))
-            outfunc = out_kafka;
-        else if (!strcmp(val, "-") || !strcmp(val, "stdout"))
-            outfunc = out_stdout;
-        else if (!strcmp(val, "null"))
-            outfunc = out_null;
-        else {
-            snprintf(errstr, errstr_size,
-                 "Unknown outputter \"%s\": "
-                 "try \"stdout\" or \"kafka\"", val);
-            return -1;
-        }
-    } else if (!strcmp(name, "logline.scratch.size"))
-        conf.scratch_size = atoi(val);
-    else if (!strcmp(name, "varnish.arg.q")) {
-        conf.q_flag = 1;
-        conf.q_flag_query = strdup(val);
-    } else if (!strcmp(name, "varnish.arg.n")) {
-        conf.n_flag = 1;
-        conf.n_flag_name = strdup(val);
-    } else if (!strcmp(name, "varnish.arg.T")) {
-        conf.T_flag = 1;
-        conf.T_flag_seconds = strdup(val);
-    } else if (!strcmp(name, "varnish.arg.L")) {
-        conf.L_flag = 1;
-        conf.L_flag_transactions = strdup(val);
-    } else {
-        snprintf(errstr, errstr_size,
-             "Unknown configuration property \"%s\"\n", name);
-        return -1;
-    }
-    return 0;
+	return 0;
 }
 
 

@@ -178,6 +178,7 @@ struct conf {
     int         stats_interval;  /* Statistics output interval */
     char       *stats_file;      /* Statistics output log file */
     FILE       *stats_fp;        /* Statistics file pointer    */
+    int         stats_append;    /* Statistics append/overwrite switch */
     time_t      t_last_stats;    /* Last stats output */
 
     int         need_logrotate;  /* If this is 1, log files will be reopened */

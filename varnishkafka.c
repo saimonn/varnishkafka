@@ -1354,6 +1354,48 @@ static int kafka_stats_cb (rd_kafka_t *rk_arg UNUSED, char *json,
     return 0;
 }
 
+static int kafka_dumpstats_cb (rd_kafka_t *rk_arg UNUSED, char *json, size_t json_len UNUSED,
+			    void *opaque UNUSED) {
+
+	int status;
+
+	if (!(conf.stats_fp = fopen(conf.stats_file, "w"))) {
+		vk_log("STATS", LOG_ERR,
+			"Failed to open statistics log file %s: %s\n",
+			conf.stats_file, strerror(errno));
+		return 0;
+	}
+
+	status = fprintf(conf.stats_fp, "{ \"kafka\": %s, \"varnishkafka\": { "
+		"\"time\":%llu, "
+		"\"tx\":%"PRIu64", "
+		"\"txerr\":%"PRIu64", "
+		"\"kafka_drerr\":%"PRIu64", "
+		"\"trunc\":%"PRIu64", "
+		"\"seq\":%"PRIu64" "
+		"} }\n",
+		json,
+		(unsigned long long)time(NULL),
+		cnt.tx,
+		cnt.txerr,
+		cnt.kafka_drerr,
+		cnt.trunc,
+		conf.sequence_number);
+
+	if (status < 0) {
+		vk_log("STATS", LOG_ERR,
+			"Failed to write to statistics log file %s: %s\n",
+			conf.stats_file, strerror(errno));
+		fclose(conf.stats_fp);
+		conf.stats_fp = NULL;
+		return 0;
+	}
+
+	fclose(conf.stats_fp);
+	conf.stats_fp = NULL;
+	return 0;
+}
+
 
 static void render_match_string (struct logline *lp) {
     char buf[8192];
@@ -1646,59 +1688,59 @@ static int tag_match (struct logline *lp, int spec, enum VSL_tag_e tagid,
  */
 static int parse_tag(struct logline* lp, struct VSL_transaction *t)
 {
-    /* Data carried by the transaction's current cursor */
-    enum VSL_tag_e tag = VSL_TAG(t->c->rec.ptr);
-    const char * tag_data = VSL_CDATA(t->c->rec.ptr);
+	/* Data carried by the transaction's current cursor */
+	enum VSL_tag_e tag = VSL_TAG(t->c->rec.ptr);
+	const char * tag_data = VSL_CDATA(t->c->rec.ptr);
 
-    /* Avoiding VSL_LEN to prevent \0 termination char
-     * to be counted causing \u0000 to be displayed in JSON
-     * encodings.
-     */
-    long len = strlen(tag_data);
+	/* Avoiding VSL_LEN to prevent \0 termination char
+	 * to be counted causing \u0000 to be displayed in JSON
+	 * encodings.
+	 */
+	long len = strlen(tag_data);
 
-    if (unlikely((!VSL_CLIENT(t->c->rec.ptr) &&
-            (!VSL_BACKEND(t->c->rec.ptr)))))
-        return conf.pret;
+	if (unlikely((!VSL_CLIENT(t->c->rec.ptr) &&
+			(!VSL_BACKEND(t->c->rec.ptr)))))
+		return conf.pret;
 
-    /* Used by the parser to map Varnish tags with output placeholders.
-     * Currently VarnishKafka does not process backend tags (discarding the
-     * related transactions) so this field is not really used anymore, but
-     * it will be kept in case of future expansions.
-     */
-    int spec = VSL_CLIENT(t->c->rec.ptr) ? VSL_CLIENTMARKER : VSL_BACKENDMARKER;
+	/* Used by the parser to map Varnish tags with output placeholders.
+	 * Currently VarnishKafka does not process backend tags (discarding the
+	 * related transactions) so this field is not really used anymore, but
+	 * it will be kept in case of future expansions.
+	 */
+	int spec = VSL_CLIENT(t->c->rec.ptr) ? VSL_CLIENTMARKER : VSL_BACKENDMARKER;
 
-    /* Truncate data if exceeding configured max */
-    if (unlikely(len > conf.tag_size_max)) {
-        cnt.trunc++;
-        len = conf.tag_size_max;
-    }
+	/* Truncate data if exceeding configured max */
+	if (unlikely(len > conf.tag_size_max)) {
+		cnt.trunc++;
+		len = conf.tag_size_max;
+	}
 
-    /* Accumulate matched tag content */
-    if (likely(!tag_match(lp, spec, tag, tag_data, len)))
-        return conf.pret;
+	/* Accumulate matched tag content */
+	if (likely(!tag_match(lp, spec, tag, tag_data, len)))
+		return conf.pret;
 
-    /* Log line is complete: render & output (stdout or kafka) */
-    render_match(lp, ++conf.sequence_number);
+	/* Log line is complete: render & output (stdout or kafka) */
+	render_match(lp, ++conf.sequence_number);
 
-    /* clean up */
-    logline_reset(lp);
+	/* clean up */
+	logline_reset(lp);
 
-    /* Reuse fresh timestamp lp->t_last from logline_reset() */
-    if (unlikely(lp->t_last >= rate_limiter_t_curr + conf.log_rate_period))
-        rate_limiters_rollover(lp->t_last);
+	/* Reuse fresh timestamp lp->t_last from logline_reset() */
+	if (unlikely(lp->t_last >= rate_limiter_t_curr + conf.log_rate_period))
+		rate_limiters_rollover(lp->t_last);
 
-    /* Stats output */
-    if (conf.stats_interval) {
-        if (unlikely(conf.need_logrotate)) {
-            logrotate();
-        }
-        if (unlikely(lp->t_last >= conf.t_last_stats + conf.stats_interval)) {
-            print_stats();
-            conf.t_last_stats = lp->t_last;
-        }
-    }
+	/* Stats output */
+	if (conf.stats_interval && conf.stats_append) {
+		if (unlikely(conf.need_logrotate)) {
+			logrotate();
+		}
+		if (unlikely(lp->t_last >= conf.t_last_stats + conf.stats_interval)) {
+			print_stats();
+			conf.t_last_stats = lp->t_last;
+		}
+	}
 
-    return conf.pret;
+	return conf.pret;
 }
 
 
@@ -1870,251 +1912,346 @@ static void usage (const char *argv0) {
 }
 
 int main (int argc, char **argv) {
-    char errstr[4096];
-    char hostname[1024];
-    struct hostent *lh;
-    char c;
+	char errstr[4096];
+	char hostname[1024];
+	struct hostent *lh;
+	char c;
+	size_t option_length;
 
-    /*
-     * Default configuration
-     */
-    conf.log_level = 6;
-    conf.log_to    = VK_LOG_STDERR;
-    conf.log_rate  = 100;
-    conf.log_rate_period = 60;
-    conf.daemonize = 1;
-    conf.tag_size_max   = 2048;
-    conf.scratch_size   = 4 * 1024 * 1024; // 4MB
-    conf.stats_interval = 60;
-    conf.stats_file     = strdup("/tmp/varnishkafka.stats.json");
-    conf.log_kafka_msg_error = 1;
-    conf.rk_conf = rd_kafka_conf_new();
-    rd_kafka_conf_set(conf.rk_conf, "client.id", "varnishkafka", NULL, 0);
-    rd_kafka_conf_set_error_cb(conf.rk_conf, kafka_error_cb);
-    rd_kafka_conf_set_dr_cb(conf.rk_conf, kafka_dr_cb);
-    rd_kafka_conf_set(conf.rk_conf, "queue.buffering.max.messages", "1000000", NULL, 0);
+	/*
+	 * Default configuration
+	 */
+	conf.log_level = 6;
+	conf.log_to    = VK_LOG_STDERR;
+	conf.log_rate  = 100;
+	conf.log_rate_period = 60;
+	conf.daemonize = 1;
+	conf.tag_size_max   = 2048;
+	conf.scratch_size   = 4 * 1024 * 1024; // 4MB
+	conf.stats_interval = 60;
+	conf.stats_file     = strdup("/tmp/varnishkafka.stats.json");
+	conf.stats_append   = 1;
+	conf.log_kafka_msg_error = 1;
+	conf.rk_conf = rd_kafka_conf_new();
+	rd_kafka_conf_set(conf.rk_conf, "client.id", "varnishkafka", NULL, 0);
+	rd_kafka_conf_set_error_cb(conf.rk_conf, kafka_error_cb);
+	rd_kafka_conf_set_dr_cb(conf.rk_conf, kafka_dr_cb);
+	rd_kafka_conf_set(conf.rk_conf, "queue.buffering.max.messages", "1000000", NULL, 0);
+	if (rd_kafka_conf_get(conf.rk_conf, "api.version.request", NULL, &option_length) == RD_KAFKA_CONF_OK) {
+		rd_kafka_conf_set(conf.rk_conf, "api.version.request", "true", NULL, 0);
+	}
 
-    conf.topic_conf = rd_kafka_topic_conf_new();
-    rd_kafka_topic_conf_set(conf.topic_conf, "required_acks", "1", NULL, 0);
+	conf.topic_conf = rd_kafka_topic_conf_new();
+	rd_kafka_topic_conf_set(conf.topic_conf, "required_acks", "1", NULL, 0);
 
-    conf.format = "%l %n %t %{Varnish:time_firstbyte}x %h "
-        "%{Varnish:handling}x/%s %b %m http://%{Host}i%U%q - - "
-        "%{Referer}i %{X-Forwarded-For}i %{User-agent}i";
+	conf.format = "%l %n %t %{Varnish:time_firstbyte}x %h "
+		"%{Varnish:handling}x/%s %b %m http://%{Host}i%U%q - - "
+		"%{Referer}i %{X-Forwarded-For}i %{User-agent}i";
 
-    /* Construct logname (%l) from local hostname */
-    gethostname(hostname, sizeof(hostname)-1);
-    hostname[sizeof(hostname)-1] = '\0';
-    lh = gethostbyname(hostname);
-    conf.logname = strdup(lh->h_name);
-    vut = VUT_InitProg(argc, argv, &vopt_spec);
-    vut->dispatch_f = transaction_scribe;
+	/* Construct logname (%l) from local hostname */
+	gethostname(hostname, sizeof(hostname)-1);
+	hostname[sizeof(hostname)-1] = '\0';
+	lh = gethostbyname(hostname);
+	conf.logname = strdup(lh->h_name);
 
+	/* Parse command line arguments */
+	while ((c = getopt(argc, argv, "hS:N:Dq:n:T:L:")) != -1) {
+		switch (c) {
+		case 'h':
+			usage(argv[0]);
+			break;
+		case 'S':
+			/* varnish-kafka config filepath */
+			conf_file_path = optarg;
+			break;
+		case 'N':
+			/* Open a specific shm file */
+			conf.N_flag = 1;
+			conf.N_flag_path = strdup(optarg);
+			break;
+		case 'D':
+			conf.daemonize = 1;
+			break;
+		case 'q':
+			/* VSLQ query */
+			conf.q_flag = 1;
+			conf.q_flag_query = strdup(optarg);
+			break;
+		case 'n':
+			/* name of varnishd instance to use */
+			conf.n_flag = 1;
+			conf.n_flag_name = strdup(optarg);
+			break;
+		case 'T':
+			/* Maximum (VSL) wait time (seconds) between a Begin tag and a End one.
+			 * Varnish workers write log tags to a buffer that gets flushed
+			 * to the shmlog once full. It might happen that a Begin
+			 * tag gets flushed to shmlog as part of a batch without
+			 * its correspondent End tag (for example, due to long requests).
+			 * Consistency checks for the value postponed
+			 * in the VSL_Arg function later on.
+			 * VSL default is 120.
+			 */
+			conf.T_flag = 1;
+			conf.T_flag_seconds = strdup(optarg);
+			break;
+		case 'L':
+			/* Upper limit of incomplete VSL transactions kept before
+			 * the oldest one is force completed.
+			 * Consistency checks for the value postponed
+			 * in the VSL_Arg function later on.
+			 * VSL default is 1000.
+			 */
+			 conf.L_flag = 1;
+			 conf.L_flag_transactions = strdup(optarg);
+			 break;
+		default:
+			usage(argv[0]);
+			break;
+		}
+	}
 
-    /* Parse command line arguments */
-    while ((c = getopt(argc, argv, "hS:N:Dq:n:T:L:")) != -1) {
-        switch (c) {
-        case 'h':
-            usage(argv[0]);
-            break;
-        case 'S':
-            /* varnish-kafka config filepath */
-            conf_file_path = optarg;
-            break;
-        case 'N':
-            vk_log("COMPAT", LOG_NOTICE, "Ignoring -N argument, it is not supported by varnish anymore");
-            break;
-        case 'D':
-            conf.daemonize = 1;
-            break;
-        case 'q':
-            /* VSLQ query */
-            conf.q_flag = 1;
-            conf.q_flag_query = strdup(optarg);
-            break;
-        case 'n':
-            /* name of varnishd instance to use */
-            conf.n_flag = 1;
-            conf.n_flag_name = strdup(optarg);
-            break;
-        case 'T':
-            /* Maximum (VSL) wait time (seconds) between a Begin tag and a End one.
-             * Varnish workers write log tags to a buffer that gets flushed
-             * to the shmlog once full. It might happen that a Begin
-             * tag gets flushed to shmlog as part of a batch without
-             * its correspondent End tag (for example, due to long requests).
-             * Consistency checks for the value postponed
-             * in the VSL_Arg function later on.
-             * VSL default is 120.
-             */
-            conf.T_flag = 1;
-            conf.T_flag_seconds = strdup(optarg);
-            break;
-        case 'L':
-            /* Upper limit of incomplete VSL transactions kept before
-             * the oldest one is force completed.
-             * Consistency checks for the value postponed
-             * in the VSL_Arg function later on.
-             * VSL default is 1000.
-             */
-             conf.L_flag = 1;
-             conf.L_flag_transactions = strdup(optarg);
-             break;
-        default:
-            if (!VUT_Arg(vut, c, optarg))
-              usage(argv[0]);
-            break;
-        }
-    }
+	/* Read config file */
+	if (conf_file_read(conf_file_path) == -1)
+		exit(1);
 
-    /* Read config file */
-    if (conf_file_read(conf_file_path) == -1)
-        exit(1);
+	if (!conf.topic)
+		usage(argv[0]);
 
-    if (!conf.topic)
-        usage(argv[0]);
+	/* Set up syslog */
+	if (conf.log_to & VK_LOG_SYSLOG)
+		openlog("varnishkafka", LOG_PID|LOG_NDELAY, LOG_DAEMON);
 
-    if (conf.q_flag) {
-        if (!VUT_Arg(vut, 'q', conf.q_flag_query)) {
-            usage(argv[0]);
-        }
-    }
-    if (conf.n_flag) {
-        if (!VUT_Arg(vut, 'n', conf.n_flag_name)) {
-            usage(argv[0]);
-        }
-    }
-    if (conf.T_flag) {
-        if (!VUT_Arg(vut, 'T', conf.T_flag_seconds)) {
-            usage(argv[0]);
-        }
-    }
-    if (conf.L_flag) {
-        if (!VUT_Arg(vut, 'L', conf.L_flag_transactions)) {
-            usage(argv[0]);
-        }
-    }
+	/* Set up statistics gathering in librdkafka, if enabled. */
+	if ((conf.stats_interval) && conf.stats_append) {
+		char tmp[30];
 
-    /* Set up syslog */
-    if (conf.log_to & VK_LOG_SYSLOG)
-        openlog("varnishkafka", LOG_PID|LOG_NDELAY, LOG_DAEMON);
+		if (!(conf.stats_fp = fopen(conf.stats_file, "a"))) {
+			fprintf(stderr, "Failed to open statistics log file %s: %s\n",
+				conf.stats_file, strerror(errno));
+			exit(1);
+		}
 
-    /* Set up statistics gathering in librdkafka, if enabled. */
-    if (conf.stats_interval) {
-        char tmp[30];
+		snprintf(tmp, sizeof(tmp), "%i", conf.stats_interval*1000);
+		rd_kafka_conf_set_stats_cb(conf.rk_conf, kafka_stats_cb);
+		rd_kafka_conf_set(conf.rk_conf, "statistics.interval.ms", tmp,
+				  NULL, 0);
 
-        if (!(conf.stats_fp = fopen(conf.stats_file, "a"))) {
-            fprintf(stderr, "Failed to open statistics log file %s: %s\n",
-                conf.stats_file, strerror(errno));
-            exit(1);
-        }
+		/* Install SIGHUP handler for logrotating stats_fp. */
+		signal(SIGHUP, sig_hup);
+	} else if ((conf.stats_interval) && !conf.stats_append) {
+		char tmp[30];
 
-        snprintf(tmp, sizeof(tmp), "%i", conf.stats_interval*1000);
-        rd_kafka_conf_set_stats_cb(conf.rk_conf, kafka_stats_cb);
-        rd_kafka_conf_set(conf.rk_conf, "statistics.interval.ms", tmp,
-                  NULL, 0);
-    }
+		snprintf(tmp, sizeof(tmp), "%i", conf.stats_interval*1000);
+		rd_kafka_conf_set_stats_cb(conf.rk_conf, kafka_dumpstats_cb);
+		rd_kafka_conf_set(conf.rk_conf, "statistics.interval.ms", tmp,
+				  NULL, 0);
+	}
 
-    /* Ignore network disconnect signals, handled by rdkafka */
-    signal(SIGPIPE, SIG_IGN);
+	/* Termination signal handlers */
+	signal(SIGINT, sig_term);
+	signal(SIGTERM, sig_term);
 
-    /* Initialize base64 decoder */
-    VB64_init();
+	/* Ignore network disconnect signals, handled by rdkafka */
+	signal(SIGPIPE, SIG_IGN);
 
-    /* Space is the most common format separator so add it first
-     * the the const string, followed by the typical default value "-". */
-    const_string_add(" -", 2);
+	/* Initialize base64 decoder */
+	VB64_init();
 
-    /* Allocate room for format tag buckets. */
-    conf.tag = calloc(VSL_TAGS_MAX, sizeof(*conf.tag));
+	/* Space is the most common format separator so add it first
+	 * the the const string, followed by the typical default value "-". */
+	const_string_add(" -", 2);
 
-    /* Parse the format string */
-    if(!conf.format) {
-        vk_log("FMT", LOG_ERR, "No formats defined");
-        exit(1);
-    }
+	/* Allocate room for format tag buckets. */
+	conf.tag = calloc(VSL_TAGS_MAX, sizeof(*conf.tag));
 
-    if (format_parse(conf.format, errstr, sizeof(errstr)) == -1) {
-        vk_log("FMTPARSE", LOG_ERR, "Failed to parse Main format string: %s\n%s",
-               conf.format, errstr);
-        exit(1);
-    }
+	/* Parse the format string */
+	if(!conf.format) {
+		vk_log("FMT", LOG_ERR, "No formats defined");
+		exit(1);
+	}
 
-    /* Creating a new logline (will be re-used across log transactions) */
-    struct logline *lp = NULL;
-    if (unlikely(!(lp = logline_get())))
-        return -1;
-    vut->dispatch_priv = lp;
+	if (format_parse(conf.format,
+			 errstr, sizeof(errstr)) == -1) {
+		vk_log("FMTPARSE", LOG_ERR,
+		       "Failed to parse Main format string: %s\n%s",
+		       conf.format, errstr);
+		exit(1);
+	}
 
-    if (conf.log_level >= 7)
-        tag_dump();
+	if (conf.log_level >= 7)
+		tag_dump();
 
-    /* Daemonize if desired */
-    if (conf.daemonize) {
-        VUT_Arg(vut, 'D', optarg);
-        conf.log_to &= ~VK_LOG_STDERR;
-    }
+	/* Daemonize if desired */
+	if (conf.daemonize) {
+		if (daemon(0, 0) == -1) {
+			vk_log("KAFKANEW", LOG_ERR, "Failed to daemonize: %s",
+			       strerror(errno));
+			exit(1);
+		}
+		conf.log_to &= ~VK_LOG_STDERR;
+	}
 
-    /* Kafka outputter */
-    if (outfunc == out_kafka) {
-        /* Create Kafka handle */
-        if (!(rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf.rk_conf, errstr, sizeof(errstr)))) {
-            vk_log("KAFKANEW", LOG_ERR,
-                   "Failed to create kafka handle: %s", errstr);
-            exit(1);
-        }
+	/* Kafka outputter */
+	if (outfunc == out_kafka) {
+		/* Create Kafka handle */
+		if (!(rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf.rk_conf,
+					errstr, sizeof(errstr)))) {
+			vk_log("KAFKANEW", LOG_ERR,
+			       "Failed to create kafka handle: %s", errstr);
+			exit(1);
+		}
 
-        rd_kafka_set_log_level(rk, conf.log_level);
+		rd_kafka_set_log_level(rk, conf.log_level);
 
-        /* Create Kafka topic handle */
-        if (!(rkt = rd_kafka_topic_new(rk, conf.topic,
-                           conf.topic_conf))) {
-            vk_log("KAFKANEW", LOG_ERR,
-                   "Invalid topic or configuration: %s: %s",
-                   conf.topic, strerror(errno));
-            exit(1);
-        }
-        vut->idle_f = poll_rdkafka;
-    }
+		/* Create Kafka topic handle */
+		if (!(rkt = rd_kafka_topic_new(rk, conf.topic,
+					       conf.topic_conf))) {
+			vk_log("KAFKANEW", LOG_ERR,
+			       "Invalid topic or configuration: %s: %s",
+			       conf.topic, strerror(errno));
+			exit(1);
+		}
 
-    /* Main dispatcher loop depending on outputter */
-    conf.run = 1;
-    conf.pret = 0;
+	}
 
-    // Setup VUT
-    VUT_Signal(sighandler);
-    VUT_Setup(vut);
-    VUT_Main(vut);
+	/* Varnish VSL declaration (vsm and vsl structures) is done
+	 * in the header file because used in both config.c and varnishkafka.c
+	 */
+	conf.vsl = VSL_New();
+	struct VSL_cursor *vsl_cursor;
+	conf.vsm = VSM_New();
 
-    if (outfunc == out_kafka) {
-        /* Check if all the messages have been delivered
-         * to Kafka to update statistics.
-         */
+	if (conf.T_flag) {
+		if (VSL_Arg(conf.vsl, 'T', conf.T_flag_seconds) < 0) {
+			vk_log("VSL_T_arg", LOG_ERR, "Failed to set a %s timeout for VSL log transactions: %s",
+					conf.T_flag_seconds, VSL_Error(conf.vsl));
+			varnish_api_cleaning();
+			exit(1);
+		}
+	}
 
-        /* Run until all kafka messages have been delivered
-        * or we are stopped again */
-        conf.run = 1;
+	if (conf.L_flag) {
+		if (VSL_Arg(conf.vsl, 'L', conf.L_flag_transactions) < 0) {
+			vk_log("VSL_L_arg", LOG_ERR, "Failed to set a %s upper limit of VSL log transactions: %s",
+					conf.L_flag_transactions, VSL_Error(conf.vsl));
+			varnish_api_cleaning();
+			exit(1);
+		}
+	}
 
-        while (conf.run && (rd_kafka_outq_len(rk) > 0))
-            rd_kafka_poll(rk, 100);
+	/* Check if the user wants to open a specific SHM File (-N) or
+	 * a SHM file related to a specific varnishd instance (-n)
+	 */
+	if (conf.N_flag) {
+		if (!VSM_N_Arg(conf.vsm, conf.N_flag_path)) {
+			vk_log("VSM_N_arg", LOG_ERR, "Failed to open %s: %s",
+					conf.N_flag_path, VSM_Error(conf.vsm));
+			varnish_api_cleaning();
+			exit(1);
+		}
+	} else if (conf.n_flag) {
+		if (!VSM_n_Arg(conf.vsm, conf.n_flag_name)) {
+			vk_log("VSM_n_arg", LOG_ERR, "Failed to open shm for varnishd %s: %s",
+					conf.n_flag_name, VSM_Error(conf.vsm));
+			varnish_api_cleaning();
+			exit(1);
+		}
+	}
 
-        /* Kafka clean-up */
-        rd_kafka_destroy(rk);
-    }
+	if (VSM_Open(conf.vsm) < 0) {
+		vk_log("VSM_OPEN", LOG_ERR, "Failed to open Varnish VSL: %s\n", VSM_Error(conf.vsm));
+		varnish_api_cleaning();
+		exit(1);
+	}
+	vsl_cursor = VSL_CursorVSM(conf.vsl, conf.vsm, VSL_COPT_TAIL | VSL_COPT_BATCH);
+	if (vsl_cursor == NULL) {
+		vk_log("VSL_CursorVSM", LOG_ERR, "Failed to obtain a cursor for the SHM log: %s\n",
+				VSL_Error(conf.vsl));
+		varnish_api_cleaning();
+		exit(1);
+	}
 
-    print_stats();
+	/* Setting VSLQ query */
+	if (conf.q_flag) {
+		conf.vslq = VSLQ_New(conf.vsl, &vsl_cursor, VSL_g_request, conf.q_flag_query);
+	} else {
+		conf.vslq = VSLQ_New(conf.vsl, &vsl_cursor, VSL_g_request, NULL);
+	}
+	if (conf.vslq == NULL) {
+		vk_log("VSLQ_NEW", LOG_ERR, "Failed to instantiate the VSL query: %s\n",
+				VSL_Error(conf.vsl));
+		varnish_api_cleaning();
+		exit(1);
+	}
 
-    /* if stats_fp is set (i.e. open), close it. */
-    if (conf.stats_fp) {
-        fclose(conf.stats_fp);
-        conf.stats_fp = NULL;
-    }
+	/* Main dispatcher loop depending on outputter */
+	conf.run = 1;
+	conf.pret = 0;
 
-    VUT_Fini(&vut);
-    vut = NULL;
+	/* time struct to sleep for 10ms */
+	struct timespec wait_for;
+	wait_for.tv_sec = 0;
+	wait_for.tv_nsec = 10000000L;
 
-    free(conf.stats_file);
-    free(lp);
-    rate_limiters_rollover(time(NULL));
+	/* Creating a new logline (will be re-used across log transactions) */
+	struct logline *lp = NULL;
+	if (unlikely(!(lp = logline_get())))
+		return -1;
 
-    exit(0);
+	while (conf.run) {
+		int dispatch_status = VSLQ_Dispatch(conf.vslq, transaction_scribe, lp);
+
+		/* Nothing to read from the shm handle, sleeping */
+		if (dispatch_status == 0)
+			nanosleep(&wait_for, NULL);
+
+		/* Varnish log abandoned or overrun, closing gracefully */
+		else if (dispatch_status <= -2) {
+			vk_log("VSLQ_Dispatch", LOG_ERR, "Varnish Log abandoned or overrun.");
+			break;
+		}
+		/* EOF from the Varnish Log, closing gracefully */
+		else if (dispatch_status == -1) {
+			vk_log("VSLQ_Dispatch", LOG_ERR, "Varnish Log EOF.");
+			break;
+		}
+
+		if (outfunc == out_kafka)
+			rd_kafka_poll(rk, 0);
+	}
+
+	/* Run until all kafka messages have been delivered
+	* or we are stopped again */
+	conf.run = 1;
+
+	if (outfunc == out_kafka) {
+		/* Check if all the messages have been delivered
+		 * to Kafka to update statistics.
+		 */
+		while (conf.run && (rd_kafka_outq_len(rk) > 0))
+			rd_kafka_poll(rk, 100);
+
+		/* Kafka clean-up */
+		rd_kafka_destroy(rk);
+	}
+
+	if (conf.stats_append)
+		print_stats();
+
+	/* if stats_fp is set (i.e. open), close it. */
+	if (conf.stats_fp) {
+		fclose(conf.stats_fp);
+		conf.stats_fp = NULL;
+	}
+
+	free(conf.stats_file);
+
+	free(lp);
+
+	rate_limiters_rollover(time(NULL));
+
+	varnish_api_cleaning();
+
+	exit(0);
 }
