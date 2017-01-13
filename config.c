@@ -157,6 +157,8 @@ static int conf_set (const char *name, const char *val,
 		conf.stats_file = strdup(val);
 	} else if (!strcmp(name, "log.statistics.interval"))
 		conf.stats_interval = atoi(val);
+	else if (!strcmp(name, "log.statistics.append"))
+		conf.stats_append = conf_tof(val);
 	else if (!strcmp(name, "log.rate.max"))
 		conf.log_rate = atoi(val);
 	else if (!strcmp(name, "log.rate.period"))

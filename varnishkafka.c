@@ -1349,6 +1349,48 @@ static int kafka_stats_cb (rd_kafka_t *rk_arg UNUSED, char *json, size_t json_le
 	return 0;
 }
 
+static int kafka_dumpstats_cb (rd_kafka_t *rk_arg UNUSED, char *json, size_t json_len UNUSED,
+			    void *opaque UNUSED) {
+
+	int status;
+
+	if (!(conf.stats_fp = fopen(conf.stats_file, "w"))) {
+		vk_log("STATS", LOG_ERR,
+			"Failed to open statistics log file %s: %s\n",
+			conf.stats_file, strerror(errno));
+		return 0;
+	}
+
+	status = fprintf(conf.stats_fp, "{ \"kafka\": %s, \"varnishkafka\": { "
+		"\"time\":%llu, "
+		"\"tx\":%"PRIu64", "
+		"\"txerr\":%"PRIu64", "
+		"\"kafka_drerr\":%"PRIu64", "
+		"\"trunc\":%"PRIu64", "
+		"\"seq\":%"PRIu64" "
+		"} }\n",
+		json,
+		(unsigned long long)time(NULL),
+		cnt.tx,
+		cnt.txerr,
+		cnt.kafka_drerr,
+		cnt.trunc,
+		conf.sequence_number);
+
+	if (status < 0) {
+		vk_log("STATS", LOG_ERR,
+			"Failed to write to statistics log file %s: %s\n",
+			conf.stats_file, strerror(errno));
+		fclose(conf.stats_fp);
+		conf.stats_fp = NULL;
+		return 0;
+	}
+
+	fclose(conf.stats_fp);
+	conf.stats_fp = NULL;
+	return 0;
+}
+
 
 static void render_match_string (struct logline *lp) {
 	char buf[8192];
@@ -1682,7 +1724,7 @@ static int parse_tag(struct logline* lp, struct VSL_transaction *t)
 		rate_limiters_rollover(lp->t_last);
 
 	/* Stats output */
-	if (conf.stats_interval) {
+	if (conf.stats_interval && conf.stats_append) {
 		if (unlikely(conf.need_logrotate)) {
 			logrotate();
 		}
@@ -1887,6 +1929,7 @@ int main (int argc, char **argv) {
 	conf.scratch_size   = 4 * 1024 * 1024; // 4MB
 	conf.stats_interval = 60;
 	conf.stats_file     = strdup("/tmp/varnishkafka.stats.json");
+	conf.stats_append   = 1;
 	conf.log_kafka_msg_error = 1;
 	conf.rk_conf = rd_kafka_conf_new();
 	rd_kafka_conf_set(conf.rk_conf, "client.id", "varnishkafka", NULL, 0);
@@ -1981,7 +2024,7 @@ int main (int argc, char **argv) {
 		openlog("varnishkafka", LOG_PID|LOG_NDELAY, LOG_DAEMON);
 
 	/* Set up statistics gathering in librdkafka, if enabled. */
-	if (conf.stats_interval) {
+	if ((conf.stats_interval) && conf.stats_append) {
 		char tmp[30];
 
 		if (!(conf.stats_fp = fopen(conf.stats_file, "a"))) {
@@ -1997,6 +2040,13 @@ int main (int argc, char **argv) {
 
 		/* Install SIGHUP handler for logrotating stats_fp. */
 		signal(SIGHUP, sig_hup);
+	} else if ((conf.stats_interval) && !conf.stats_append) {
+		char tmp[30];
+
+		snprintf(tmp, sizeof(tmp), "%i", conf.stats_interval*1000);
+		rd_kafka_conf_set_stats_cb(conf.rk_conf, kafka_dumpstats_cb);
+		rd_kafka_conf_set(conf.rk_conf, "statistics.interval.ms", tmp,
+				  NULL, 0);
 	}
 
 	/* Termination signal handlers */
@@ -2187,7 +2237,8 @@ int main (int argc, char **argv) {
 		rd_kafka_destroy(rk);
 	}
 
-	print_stats();
+	if (conf.stats_append)
+		print_stats();
 
 	/* if stats_fp is set (i.e. open), close it. */
 	if (conf.stats_fp) {

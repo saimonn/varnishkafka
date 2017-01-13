@@ -190,6 +190,11 @@ log.kafka.msg.error = true
 # Defaults to /tmp/varnishkafka.stats.json
 #log.statistics.file = /tmp/varnishkafka.stats.json
 
+# Statistics file write mode. Defaults to true, append statistics in a usual
+# logfile mode. Set to false to overwrite file content with a single line
+# containing both statistics concatenated.
+#log.statistics.append = true
+
 
 # daemonize varnishkafka (boolean)
 daemonize = false
