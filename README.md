@@ -95,6 +95,13 @@ To use an earlier version of glibc, compile with the `-D_BSD_SOURCE` flag.
 
 ## Instructions
 
+### Building requirements
+      libc6-dev
+      libvarnishapi-dev
+      librdkafka-dev
+      libyajl-dev
+      libpthread-stubs0-dev ?
+
 ### Building
 
       make
