@@ -191,7 +191,7 @@ static int conf_set (const char *name, const char *val,
 		conf.n_flag_name = strdup(val);
 	} else if (!strcmp(name, "varnish.arg.N")) {
 		conf.n_flag = 1;
-		conf.n_flag_path = strdup(val);
+		conf.n_flag_name = strdup(val);
 	} else if (!strcmp(name, "varnish.arg.T")) {
 		conf.T_flag = 1;
 		conf.T_flag_seconds = strdup(val);

@@ -1967,7 +1967,7 @@ int main (int argc, char **argv) {
 		case 'N':
 			/* Open a specific shm file */
 			conf.n_flag = 1;
-			conf.n_flag_path = strdup(optarg);
+			conf.n_flag_name = strdup(optarg);
 			break;
 		case 'D':
 			conf.daemonize = 1;
@@ -2144,9 +2144,9 @@ int main (int argc, char **argv) {
 	 * a SHM file related to a specific varnishd instance (-n)
 	 */
 	if (conf.n_flag) {
-		if (!VSM_N_Arg(conf.vsm, conf.n_flag_path)) {
+		if (!VSM_N_Arg(conf.vsm, conf.n_flag_name)) {
 			vk_log("VSM_N_arg", LOG_ERR, "Failed to open %s: %s",
-					conf.n_flag_path, VSM_Error(conf.vsm));
+					conf.n_flag_name, VSM_Error(conf.vsm));
 			varnish_api_cleaning();
 			exit(1);
 		}
