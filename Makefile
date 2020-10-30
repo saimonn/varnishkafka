@@ -26,6 +26,8 @@ LDFLAGS += -lrdkafka -lvarnishapi -lpthread -lrt -lz -lm
 all:
 	gcc $(CFLAGS) $(SRCS) -o $(PROG) $(LDFLAGS)
 
+test:
+	ldd ./varnishkafka
 
 install:
 	if [ "$(DESTDIR)" != "/usr/local" ]; then \
