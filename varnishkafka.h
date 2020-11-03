@@ -50,8 +50,8 @@
  * Pointer to matched tag's content.
  */
 struct match {
-	const char *ptr;
-	size_t     len;
+    const char *ptr;
+    size_t     len;
 };
 
 
@@ -59,19 +59,19 @@ struct match {
  * Currently parsed logline
  */
 struct logline {
-	/* Per fmt logline matches */
-	struct match *match;
+    /* Per fmt logline matches */
+    struct match *match;
 
-	/* Sequence number */
-	uint64_t seq;
+    /* Sequence number */
+    uint64_t seq;
 
-	/* Last use of this logline */
-	time_t   t_last;
+    /* Last use of this logline */
+    time_t   t_last;
 
-	/* Scratch pad */
-	size_t   sof;
-	char     scratch[0];  /* Must be at end of struct.
-			       * Allocated to conf.scratch_size bytes */
+    /* Scratch pad */
+    size_t   sof;
+    char     scratch[0];  /* Must be at end of struct.
+                   * Allocated to conf.scratch_size bytes */
 };
 
 
@@ -79,16 +79,16 @@ struct logline {
  * Tag found in format.
  */
 struct tag {
-	struct tag *next;
-	struct fmt *fmt;
-	int    spec;
-	int    tag;
-	char  *var;
-	size_t varlen;
-	size_t (*parser) (const struct tag *tag, struct logline *lp,
-			const char *ptr, size_t len);
-	int    col;
-	int    flags;
+    struct tag *next;
+    struct fmt *fmt;
+    int    spec;
+    int    tag;
+    char  *var;
+    size_t varlen;
+    size_t (*parser) (const struct tag *tag, struct logline *lp,
+            const char *ptr, size_t len);
+    int    col;
+    int    flags;
 #define TAG_F_TIMESTAMP 1           /* var is a SLT_Timestamp formatter */
 #define TAG_F_TIMESTAMP_END 1<<2    /* var contains the end prefix */
 #define TAG_F_LAST 1<<3             /* If multiple, log last one not first one */
@@ -108,34 +108,34 @@ struct tag {
  * Formatting from format
  */
 struct fmt {
-	int   id;         /* formatter (i.e., (char)'r' in "%r") */
-	int   idx;        /* fmt[] array index */
-	const char *var;  /* variable name  (for %{..}x,i,o) */
-	const char *def;  /* default string, typically "-" */
-	size_t    deflen; /* default string's length */
-	const char *name; /* field name (for JSON, et.al) */
-	size_t   namelen; /* name length */
-	enum {
-		FMT_TYPE_STRING,
-		FMT_TYPE_NUMBER,
-	}     type;       /* output type (for JSON, et.al) */
-	int   flags;
+    int   id;         /* formatter (i.e., (char)'r' in "%r") */
+    int   idx;        /* fmt[] array index */
+    const char *var;  /* variable name  (for %{..}x,i,o) */
+    const char *def;  /* default string, typically "-" */
+    size_t    deflen; /* default string's length */
+    const char *name; /* field name (for JSON, et.al) */
+    size_t   namelen; /* name length */
+    enum {
+        FMT_TYPE_STRING,
+        FMT_TYPE_NUMBER,
+    }     type;       /* output type (for JSON, et.al) */
+    int   flags;
 #define FMT_F_ESCAPE    0x1 /* Escape the value string */
 };
 
 
 typedef enum {
-	VK_ENC_STRING,
-	VK_ENC_JSON,
-	VK_ENC_INVALID,
+    VK_ENC_STRING,
+    VK_ENC_JSON,
+    VK_ENC_INVALID,
 } fmt_enc_t;
 
 struct fmt_conf {
-	/* Array of tags in output order. */
-	struct fmt *fmt;
-	int         fmt_cnt;
-	int         fmt_size;
-	fmt_enc_t   encoding;
+    /* Array of tags in output order. */
+    struct fmt *fmt;
+    int         fmt_cnt;
+    int         fmt_size;
+    fmt_enc_t   encoding;
 };
 
 
@@ -159,41 +159,41 @@ struct conf {
     char*       L_flag_transactions;
 
 
-	/* Sparsely populated with desired tags */
-	struct tag **tag;
+    /* Sparsely populated with desired tags */
+    struct tag **tag;
 
-	uint64_t    sequence_number;
+    uint64_t    sequence_number;
 
-	size_t      scratch_size;    /* Size of scratch buffer */
-	fmt_enc_t   fmt_enc;
-	int         total_fmt_cnt;
-	int         tag_size_max;    /* Maximum tag size to accept without
-				      * truncating it. */
+    size_t      scratch_size;    /* Size of scratch buffer */
+    fmt_enc_t   fmt_enc;
+    int         total_fmt_cnt;
+    int         tag_size_max;    /* Maximum tag size to accept without
+                      * truncating it. */
 
-	int         stats_interval;  /* Statistics output interval */
-	char       *stats_file;      /* Statistics output log file */
-	FILE       *stats_fp;        /* Statistics file pointer    */
-	int         stats_append;    /* Statistics append/overwrite switch */
-	time_t      t_last_stats;    /* Last stats output */
+    int         stats_interval;  /* Statistics output interval */
+    char       *stats_file;      /* Statistics output log file */
+    FILE       *stats_fp;        /* Statistics file pointer    */
+    int         stats_append;    /* Statistics append/overwrite switch */
+    time_t      t_last_stats;    /* Last stats output */
 
-	int         need_logrotate;  /* If this is 1, log files will be reopened */
+    int         need_logrotate;  /* If this is 1, log files will be reopened */
 
-	/* Kafka config */
-	int         partition;
-	char       *topic;
+    /* Kafka config */
+    int         partition;
+    char       *topic;
 
-	char       *logname;
-	int         log_level;
-	int         log_to;
+    char       *logname;
+    int         log_level;
+    int         log_to;
 #define VK_LOG_STDERR 0x1
 #define VK_LOG_SYSLOG 0x2
-	int         log_rate;        /* Maximum log rate per minute. */
-	int         log_rate_period; /* Log rate limiting period */
+    int         log_rate;        /* Maximum log rate per minute. */
+    int         log_rate_period; /* Log rate limiting period */
 
-	int         log_kafka_msg_error;  /* Log Kafka message delivery errors*/
+    int         log_kafka_msg_error;  /* Log Kafka message delivery errors*/
 
-	const char *format; /* Configured format string */
-	int         daemonize;
+    const char *format; /* Configured format string */
+    int         daemonize;
 
     rd_kafka_conf_t       *rk_conf;
     rd_kafka_topic_conf_t *topic_conf;
@@ -211,16 +211,16 @@ int conf_file_read (const char *path);
 
 
 void vk_log0 (const char *func, const char *file, int line,
-	      const char *facility, int level, const char *fmt, ...)
-	__attribute__((format (printf, 6, 7)));
+          const char *facility, int level, const char *fmt, ...)
+    __attribute__((format (printf, 6, 7)));
 
 #define vk_log(facility,level,fmt...) \
-	vk_log0(__FUNCTION__,__FILE__,__LINE__, facility, level, fmt)
+    vk_log0(__FUNCTION__,__FILE__,__LINE__, facility, level, fmt)
 
 #define _DBG(fmt...) vk_log("DEBUG", LOG_DEBUG, fmt)
 
 void vk_log_stats(const char *fmt, ...)
-	__attribute__((format (printf, 1, 2)));
+    __attribute__((format (printf, 1, 2)));
 
 void out_kafka (struct logline *lp, const char *buf, size_t len);
 void out_stdout (struct logline *lp, const char *buf, size_t len);
